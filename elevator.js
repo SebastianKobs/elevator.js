@@ -9,7 +9,7 @@
  * Elevator.js
  *********************************************/
 
-var Elevator = function(options) {
+var Elevator = function (options) {
     "use strict";
 
     // Elements
@@ -26,13 +26,27 @@ var Elevator = function(options) {
     var verticalPadding = null;
     var elevating = false;
 
-    var startCallback;
     var mainAudio;
     var endAudio;
+    var stuckAudio;
+
+    var startCallback;
     var endCallback;
+    var stuckCallback;
 
     var that = this;
 
+    //fx
+    var canGetStuck = false;
+    var stuckChance = 0.2;
+    var stuckStepChance = null;
+    var rideStucks = false;
+    var bounceStart = null;
+    var bounceEnd = null;
+    var bounceAnimation = null;
+    var bounceStartTime = null;
+    var bounceDuration = 750;
+    var bounceRange = 200;
     /**
      * Utils
      */
@@ -43,6 +57,27 @@ var Elevator = function(options) {
         if (t < 1) return c / 2 * t * t + b;
         t--;
         return -c / 2 * (t * (t - 2) - 1) + b;
+    }
+
+    function easeInBounce(t, b, c, d) {
+        return c - easeOutBounce(d - t, 0, c, d) + b;
+    }
+
+    function easeOutBounce(t, b, c, d) {
+        if ((t /= d) < (1 / 2.75)) {
+            return c * (7.5625 * t * t) + b;
+        } else if (t < (2 / 2.75)) {
+            return c * (7.5625 * (t -= (1.5 / 2.75)) * t + .75) + b;
+        } else if (t < (2.5 / 2.75)) {
+            return c * (7.5625 * (t -= (2.25 / 2.75)) * t + .9375) + b;
+        } else {
+            return c * (7.5625 * (t -= (2.625 / 2.75)) * t + .984375) + b;
+        }
+    }
+
+    function easeInOutBounce(t, b, c, d) {
+        if (t < d / 2) return easeInBounce(t * 2, 0, c, d) * .5 + b;
+        return easeOutBounce(t * 2 - d, 0, c, d) * .5 + c * .5 + b;
     }
 
     function extendParameters(options, defaults) {
@@ -70,6 +105,10 @@ var Elevator = function(options) {
         return verticalOffset;
     }
 
+    function getClampedRandomValue(min, max) {
+        return Math.max(min, Math.min(max, Math.random()));
+    }
+
     /**
      * Main
      */
@@ -95,6 +134,37 @@ var Elevator = function(options) {
         } else {
             animationFinished();
         }
+        /**
+         * fx: stuck chance gets higher based on elapsed time
+         * actual chance to get stuck is random per ride
+         */
+        if (rideStucks) {
+            document.body.style.opacity = getClampedRandomValue(0.4, 0.8);
+        }
+        if (rideStucks && Math.random() * (timeSoFar / duration) > stuckStepChance) {
+            animationFinishedOnStuck();
+        }
+    }
+
+    function animateBounce(time) {
+        if (!bounceStartTime) {
+            bounceStartTime = time;
+        }
+
+        var timeSoFar = time - bounceStartTime;
+        var easedPosition = easeInOutBounce(
+            timeSoFar,
+            bounceStart,
+            bounceEnd - bounceStart,
+            bounceDuration
+        );
+        window.scrollTo(0, easedPosition);
+
+        if (timeSoFar < bounceDuration) {
+            bounceAnimation = requestAnimationFrame(animateBounce);
+        } else {
+            resetBounce();
+        }
     }
 
     //            ELEVATE!
@@ -110,12 +180,19 @@ var Elevator = function(options) {
     //     C  O  O  O  D
     //     C__O__O__O__D
     //    [_____________]
-    this.elevate = function() {
+    this.elevate = function () {
         if (elevating) {
             return;
         }
 
         elevating = true;
+        //fx: add chance to get stuck
+        if (canGetStuck) {
+            if (Math.random() > stuckChance) {
+                rideStucks = true;
+                stuckStepChance = getClampedRandomValue(0.3, 0.7);
+            }
+        }
         startPosition = document.documentElement.scrollTop || body.scrollTop;
         updateEndPosition();
 
@@ -150,20 +227,48 @@ var Elevator = function(options) {
         elevating = false;
     }
 
+    function resetBounce() {
+        //fx reset
+        bounceStartTime = null;
+        bounceStart = null;
+        rideStucks = false;
+        stuckStepChance = getClampedRandomValue(0.3, 0.7);
+        document.body.style.opacity = 1;
+    }
+
+
+
     function updateEndPosition() {
         if (targetElement) {
             endPosition = getVerticalOffset(targetElement);
         }
     }
 
+    function animationFinishedOnStuck() {
+        cancelAnimationFrame(animation);
+
+        bounceStart = document.documentElement.scrollTop || body.scrollTop;
+        bounceEnd = bounceStart - bounceRange;
+
+        resetPositions();
+
+        stopMainAudio();
+
+        requestAnimationFrame(animateBounce);
+
+        if (stuckAudio) {
+            stuckAudio.play();
+        }
+
+        if (stuckCallback) {
+            stuckCallback();
+        }
+    }
     function animationFinished() {
         resetPositions();
 
         // Stop music!
-        if (mainAudio) {
-            mainAudio.pause();
-            mainAudio.currentTime = 0;
-        }
+        stopMainAudio();
 
         if (endAudio) {
             endAudio.play();
@@ -174,8 +279,17 @@ var Elevator = function(options) {
         }
     }
 
+    function stopMainAudio() {
+        if (mainAudio) {
+            mainAudio.pause();
+            mainAudio.currentTime = 0;
+        }
+    }
     function onWindowBlur() {
         // If animating, go straight to the top. And play no more music.
+        cancelAnimationFrame(bounceAnimation);
+        resetBounce();
+
         if (elevating) {
             cancelAnimationFrame(animation);
             resetPositions();
@@ -195,7 +309,7 @@ var Elevator = function(options) {
             element.addEventListener("click", that.elevate, false);
         } else {
             // Older browsers
-            element.attachEvent("onclick", function() {
+            element.attachEvent("onclick", function () {
                 updateEndPosition();
                 document.documentElement.scrollTop = endPosition;
                 document.body.scrollTop = endPosition;
@@ -205,10 +319,10 @@ var Elevator = function(options) {
     }
 
     function init(_options) {
-		// Take the stairs instead
-		if (!browserMeetsRequirements()) {
-			return;
-		}
+        // Take the stairs instead
+        if (!browserMeetsRequirements()) {
+            return;
+        }
 
         // Bind to element click event.
         body = document.body;
@@ -220,7 +334,8 @@ var Elevator = function(options) {
             preloadAudio: true,
             loopAudio: true,
             startCallback: null,
-            endCallback: null
+            endCallback: null,
+            canGetStuck: false
         };
 
         _options = extendParameters(_options, defaults);
@@ -240,6 +355,10 @@ var Elevator = function(options) {
 
         if (_options.verticalPadding) {
             verticalPadding = _options.verticalPadding;
+        }
+        //fx
+        if (_options.canGetStuck) {
+            canGetStuck = true;
         }
 
         window.addEventListener("blur", onWindowBlur, false);
