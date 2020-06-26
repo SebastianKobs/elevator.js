@@ -374,6 +374,12 @@ var Elevator = function (options) {
             endAudio.setAttribute("preload", "true");
         }
 
+        if (_options.stuckAudio) {
+            stuckAudio = new Audio(_options.stuckAudio);
+            stuckAudio.setAttribute("preload", "true");
+        }
+
+
         if (_options.endCallback) {
             endCallback = _options.endCallback;
         }
